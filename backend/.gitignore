@@ -13,9 +13,6 @@ build/
 venv/
 *.sqlite3
 
-# Poetry（使わない場合もOK）
-poetry.lock
-
 # Virtualenv
 ENV/
 env/
@@ -30,6 +27,7 @@ alembic/__pycache__/
 
 # macOS
 .DS_Store
+**/.DS_Store
 
 # Logs
 *.log
@@ -42,7 +40,6 @@ alembic/__pycache__/
 **/__pycache__/
 *.pid
 *.db
-docker-compose.override.yml
 
 # Database dumps
 *.sql
@@ -52,10 +49,6 @@ docker-compose.override.yml
 htmlcov/
 .coverage
 .coverage.*
-
-# Frontend build (if monorepo)
-frontend/dist/
-frontend/node_modules/
 
 # Uvicorn reload artifact
 .reload
