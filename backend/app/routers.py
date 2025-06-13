@@ -1,3 +1,4 @@
+# FastAPIのルーティングを定義するファイル
 from fastapi import APIRouter, Depends, FastAPI, Request
 
 # APIRouterインスタンスを作成（ルーティングを管理する）

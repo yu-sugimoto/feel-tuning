@@ -14,5 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ソースコードのコピー
 COPY . .
 
-# FastAPIアプリの起動
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Entrypoint スクリプトをコピーし実行権限付与
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Entrypointの実行（マイグレーション → 初期データ投入 → アプリ起動）
+CMD ["/entrypoint.sh"]

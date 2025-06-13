@@ -6,6 +6,7 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./app:/app
+      - ./alembic:/alembic
     ports:
       - "8000:8000"
     depends_on:
