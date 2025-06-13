@@ -1,0 +1,51 @@
+services:
+  app:
+    image: python:3.13-slim
+    container_name: app
+    build:
+      dockerfile: Dockerfile
+    volumes:
+      - ./app:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - ENVIRONMENT=development
+      - POSTGRES_USER=music_swipe
+      - POSTGRES_PASSWORD=music_swipe
+      - POSTGRES_DB=music_swipe
+      - POSTGRES_SERVER=db
+      - POSTGRES_PORT=5432
+    networks:
+      - app_network
+  db:
+    image: postgres:17
+    container_name: db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./app/db/postgres:/docker-entrypoint-initdb.d
+    ports:
+    # ホスト側のポート:コンテナ側のポート
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=music_swipe
+      - POSTGRES_PASSWORD=music_swipe
+      - POSTGRES_DB=music_swipe
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --locale=C
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U music_swipe -d music_swipe"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    networks:
+      - app_network
+
+volumes:
+  postgres_data:
+
+networks:
+  app_network:
+    driver: bridge

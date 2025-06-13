@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+.venv/
+venv/
+*.sqlite3
+
+# Poetry（使わない場合もOK）
+poetry.lock
+
+# Virtualenv
+ENV/
+env/
+*.env
+
+# Alembic
+alembic/versions/*.pyc
+alembic/__pycache__/
+
+# VSCode
+.vscode/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# mypy/pytest
+.mypy_cache/
+.pytest_cache/
+
+# Docker
+**/__pycache__/
+*.pid
+*.db
+docker-compose.override.yml
+
+# Database dumps
+*.sql
+*.dump
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+
+# Frontend build (if monorepo)
+frontend/dist/
+frontend/node_modules/
+
+# Uvicorn reload artifact
+.reload
