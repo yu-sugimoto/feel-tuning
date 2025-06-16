@@ -19,6 +19,8 @@ services:
       - POSTGRES_DB=music_swipe
       - POSTGRES_SERVER=db
       - POSTGRES_PORT=5432
+      - SECRET_KEY=dev-secret-key
+      - ALGORITHM=HS256
     networks:
       - app_network
   db:

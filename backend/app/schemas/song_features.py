@@ -13,5 +13,6 @@ class SongFeatureCreate(SongFeatureBase):
     song_id: int
 
 class SongFeatureSchema(SongFeatureBase):
-    class Config:
-        orm_mode = True
+    model_config = {
+        "from_attributes": True
+    }

@@ -1,18 +1,18 @@
 # Pydantic Schemas
 from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
+from pydantic import EmailStr
 
 class UserBase(BaseModel):
-    email: str
-    nickname: str
+    email: EmailStr
 
 class UserCreate(UserBase):
     password: str
+    # nickname: str | None = None  # サインアップ時にニックネームをオプションとする
 
-class UserSchema(UserBase):
-    id: int
-    created_at: datetime
+class UserRead(UserBase):
+    id: int # パスパラメータとして使用
+    # nickname: str | None = None  # ニックネームを使用する場合にはコメントアウトを外す
 
-    class Config:
-        orm_mode = True
+    model_config = {
+        "from_attributes": True
+    }

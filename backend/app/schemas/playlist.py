@@ -16,5 +16,6 @@ class PlaylistCreate(PlaylistBase):
 class PlaylistSchema(PlaylistBase):
     song: SongSchema
 
-    class Config:
-        orm_mode = True
+    model_config = {
+        "from_attributes": True
+    }

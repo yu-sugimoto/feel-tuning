@@ -15,5 +15,6 @@ class SongCreate(SongBase):
 class SongSchema(SongBase):
     id: int
 
-    class Config:
-        orm_mode = True
+    model_config = {
+        "from_attributes": True
+    }

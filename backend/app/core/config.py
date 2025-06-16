@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     POSTGRES_PORT: str
     SQLALCHEMY_DATABASE_URI: Optional[str] = None
 
+    SECRET_KEY: str
+    ALGORITHM: str
+
     @field_validator("SQLALCHEMY_DATABASE_URI", mode="after")
     def assemble_db_connection(cls, v: Optional[str], values: ValidationInfo) -> Any:
         if isinstance(v, str):
