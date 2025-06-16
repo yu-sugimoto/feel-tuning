@@ -10,7 +10,7 @@ class UserCreate(UserBase):
     # nickname: str | None = None  # サインアップ時にニックネームをオプションとする
 
 class UserRead(UserBase):
-    id: int # パスパラメータとして使用
+    id: int
     # nickname: str | None = None  # ニックネームを使用する場合にはコメントアウトを外す
 
     model_config = {

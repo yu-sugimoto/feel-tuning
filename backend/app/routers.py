@@ -1,18 +1,19 @@
 # FastAPIのルーティングを定義するファイル
 from fastapi import APIRouter, Depends, FastAPI, Request, HTTPException
 from sqlalchemy.orm import Session
-from app.dependencies import get_db
+from app.dependencies import get_db, get_current_user
 from . import schemas
 from . import services
-from app.models import User
+from app.models import User, Song, SwipeHistory
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from starlette.status import HTTP_401_UNAUTHORIZED
 from datetime import timedelta
+import random
 
 # APIRouterインスタンスを作成（ルーティングを管理する）
 router = APIRouter()
 
-# ホーム
+# ルート
 @router.get("/")
 def get_root():
     return {"message": "接続成功"}
@@ -93,3 +94,41 @@ def login_for_access_token(db: Session = Depends(get_db), form_data: OAuth2Passw
         expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
+
+# ホーム（スワイプ画面）
+@router.get("/swipe" , response_model=schemas.SongRead)
+def swipe(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """スワイプ用の推薦楽曲を1件返す。
+
+    ユーザーが過去にスワイプした曲を除外し、ランダムに1曲を推薦する。（本来は推薦アルゴリズムを使用）
+    スワイプ可能な曲がない場合は404エラーを返す。
+    
+    Args:
+        request (Request): リクエストオブジェクト。
+        db (Session): データベースセッション（依存性注入によって取得）。
+        current_user (User): 現在の認証ユーザー（依存性注入によって取得）。
+    Returns:
+        schemas.SwipeResponse: 推薦楽曲の情報を含むレスポンスモデル。
+    Raises:
+        HTTPException: スワイプ可能な曲がない場合は404エラー。
+    """
+    # 過去にスワイプした曲のIDを取得
+    swiped_song_ids = db.query(SwipeHistory.song_id).filter(SwipeHistory.user_id == current_user.id).all()
+    swiped_song_ids = [row[0] for row in swiped_song_ids]
+
+    # スワイプしていない曲を取得
+    candidate_songs = db.query(Song).filter(~Song.id.in_(swiped_song_ids)).all()
+
+    if not candidate_songs:
+        raise HTTPException(status_code=404, detail="スワイプ可能な曲がありません")
+
+    # ランダムに1曲推薦（本来は推薦アルゴリズムを使用）
+    song = random.choice(candidate_songs)
+
+    return schemas.SongRead(
+        id=song.id,
+        title=song.title,
+        artist=song.artist,
+        preview_url=song.preview_url,
+        genre=song.genre
+    )

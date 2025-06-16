@@ -2,7 +2,7 @@
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
-from .song import SongSchema
+from .song import SongRead
 
 class PlaylistBase(BaseModel):
     name: str
@@ -14,7 +14,7 @@ class PlaylistCreate(PlaylistBase):
     user_id: int
 
 class PlaylistSchema(PlaylistBase):
-    song: SongSchema
+    song: SongRead
 
     model_config = {
         "from_attributes": True
