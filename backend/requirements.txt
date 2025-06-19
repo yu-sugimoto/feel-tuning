@@ -10,3 +10,6 @@ bcrypt==4.0.1
 PyJWT==2.10.1
 pydantic[email]==2.8.1
 python-multipart==0.0.6
+openai==1.88.0
+numpy==1.26.4
+scikit-learn==1.7.0

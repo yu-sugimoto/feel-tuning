@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     POSTGRES_PORT: str
     SQLALCHEMY_DATABASE_URI: Optional[str] = None
 
+    # OpenAI API設定
+    API_KEY: str
+
     SECRET_KEY: str
     ALGORITHM: str
 

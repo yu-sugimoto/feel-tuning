@@ -1,2 +1,4 @@
 from .password_hash import get_password_hash, verify_password, authenticate_user
 from .jwt_authenticate import create_access_token, decode_access_token
+from .vector_picture import call_openai_image_feature_extraction
+from .vector_picture import feature_to_vector

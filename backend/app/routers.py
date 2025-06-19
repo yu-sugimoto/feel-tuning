@@ -1,14 +1,16 @@
 # FastAPIのルーティングを定義するファイル
-from fastapi import APIRouter, Depends, FastAPI, Request, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, Request, HTTPException, File, UploadFile
 from sqlalchemy.orm import Session
 from app.dependencies import get_db, get_current_user
 from . import schemas
 from . import services
-from app.models import User, Song, SwipeHistory
+from app.models import User, Song, SwipeHistory, SongFeature
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from starlette.status import HTTP_401_UNAUTHORIZED
 from datetime import timedelta
 import random
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
 # APIRouterインスタンスを作成（ルーティングを管理する）
 router = APIRouter()
@@ -94,6 +96,50 @@ def login_for_access_token(db: Session = Depends(get_db), form_data: OAuth2Passw
         expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
+
+# 初期プレイリスト生成（画像アップロード）
+@router.post("/photo", response_model=schemas.SongList)
+def generate_init_playlist(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """画像をアップロードして初期プレイリストを生成するエンドポイント
+    
+    Args:
+        request (Request): リクエストオブジェクト。
+        file (UploadFile): アップロードされた画像ファイル。
+        db (Session): データベースセッション（依存性注入によって取得）。
+        current_user (User): 現在の認証ユーザー（依存性注入によって取得）。
+    Returns:
+        schemas.SongList: 類似楽曲と非類似楽曲のリストを含むレスポンスモデル。
+
+    Raises:
+        HTTPException: 画像の処理やデータベース操作に失敗した場合は500エラー。
+    """
+    # 画像ファイルの読み込み
+    try:
+        image_bytes = file.read()
+        image_features = services.call_openai_image_feature_extraction(image_bytes)
+        query_vec = services.feature_to_vector(image_features).reshape(1, -1)
+
+        # DBから楽曲と特徴量取得
+        all_features = db.query(SongFeature).all()
+        all_songs = [db.query(Song).get(f.song_id) for f in all_features]
+
+        song_vectors = np.array([services.feature_to_vector(f) for f in all_features])
+        sims = cosine_similarity(query_vec, song_vectors)[0]
+
+        sorted_idx = np.argsort(sims)
+        top_idxs = sorted_idx[-3:][::-1]
+        bottom_idxs = sorted_idx[:3]
+
+        similar_songs = [all_songs[i] for i in top_idxs]
+        dissimilar_songs = [all_songs[i] for i in bottom_idxs]
+
+        return schemas.SongList(
+            similar=[schemas.SongRead.model_validate(s) for s in similar_songs],
+            dissimilar=[schemas.SongRead.model_validate(s) for s in dissimilar_songs]
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ホーム（スワイプ画面）
 @router.get("/swipe" , response_model=schemas.SongRead)
