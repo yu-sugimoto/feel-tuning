@@ -68,6 +68,9 @@ export default function LoginScreen() {
         <TouchableOpacity style={styles.button} onPress={handleLogin}>
           <Text style={styles.buttonText}>つづける</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={styles.button} onPress={() => {router.back()}}>
+          <Text style={styles.buttonText}>もどる</Text>
+        </TouchableOpacity>
       </View>
     </ImageBackground>
   );
@@ -114,7 +117,7 @@ const styles = StyleSheet.create({
     borderColor: "white",
     borderWidth: 4,
     borderRadius: 10,
-    marginTop: 100,
+    marginTop: 50,
     minWidth: 330,
     alignItems: "center",
   },
