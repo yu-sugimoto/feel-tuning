@@ -66,6 +66,7 @@ export default function SwipeScreen() {
   const params = useLocalSearchParams();
   const [songQueue, setSongQueue] = useState<Song[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [likeCount, setLikeCount] = useState(0);
 
   // Animation values
   const translateX = useSharedValue(0);
@@ -100,6 +101,20 @@ export default function SwipeScreen() {
   const handleSwipe = async (liked: boolean) => {
     const currentSong = songQueue[0];
     if (!currentSong) return;
+
+    // Like数をカウント
+    if (liked) {
+      const newLikeCount = likeCount + 1;
+      setLikeCount(newLikeCount);
+      
+      // 3曲Likeで終了
+      if (newLikeCount >= 3) {
+        Alert.alert('完了', 'Swipeありがとうございました！\n3曲の楽曲を見つけました🎵', [
+          { text: 'OK', onPress: () => router.push('/photo') }
+        ]);
+        return;
+      }
+    }
 
     setIsLoading(true);
 
@@ -140,21 +155,31 @@ export default function SwipeScreen() {
       const data = await response.json();
       
       if (response.ok && data.song) {
-        // キューから現在の曲を削除し、新しい曲を追加
+        // 現在の曲を削除し、APIから受け取った新しい曲を追加
         const newQueue = songQueue.slice(1);
         newQueue.push(data.song);
         setSongQueue(newQueue);
         resetAnimation();
       } else if (response.status === 404) {
-        // スワイプ候補なし
-        Alert.alert('完了', 'すべての楽曲をスワイプしました！', [
-          { text: 'OK', onPress: () => router.push('/photo') }
-        ]);
+        // スワイプ候補なし - 現在の曲だけ削除
+        const newQueue = songQueue.slice(1);
+        setSongQueue(newQueue);
+        resetAnimation();
+        
+        if (newQueue.length === 0) {
+          Alert.alert('完了', 'すべての楽曲をスワイプしました！', [
+            { text: 'OK', onPress: () => router.push('/photo') }
+          ]);
+        }
       } else {
         throw new Error(data.detail || 'スワイプに失敗しました');
       }
     } catch (error: any) {
       Alert.alert('エラー', error.message);
+      // エラー時も現在の曲は削除して続行
+      const newQueue = songQueue.slice(1);
+      setSongQueue(newQueue);
+      resetAnimation();
     } finally {
       setIsLoading(false);
     }
@@ -266,6 +291,7 @@ export default function SwipeScreen() {
       >
         <View style={styles.container}>
           <Text style={styles.title}>楽曲スワイプ</Text>
+          <Text style={styles.likeCounter}>❤️ {likeCount}/3</Text>
           
           <View style={styles.cardContainer}>
             {/* Next card (background) */}
@@ -346,9 +372,20 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 38,
     color: "#fff",
-    marginBottom: 40,
+    marginBottom: 20,
     fontWeight: "bold",
     textAlign: "center",
+  },
+  likeCounter: {
+    fontSize: 18,
+    color: "#fff",
+    marginBottom: 20,
+    fontWeight: "bold",
+    textAlign: "center",
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    paddingHorizontal: 15,
+    paddingVertical: 5,
+    borderRadius: 15,
   },
   cardContainer: {
     width: screenWidth * 0.85,
