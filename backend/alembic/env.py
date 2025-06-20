@@ -7,7 +7,7 @@ from alembic import context
 
 # Baseクラスをインポート
 from app.db.base_class import Base
-from app.models import user, song, playlist, song_features, swipe_history
+from app.models import user, swipe_history, playlist_history
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

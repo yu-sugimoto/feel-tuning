@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from app.models import User, Song, SongFeature, SwipeHistory, Playlist
+from app.models import User
 from app.dependencies import get_db
 
 # DB接続

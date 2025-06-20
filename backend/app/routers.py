@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.dependencies import get_db, get_current_user
 from . import schemas
 from . import services
-from app.models import User, Song, SwipeHistory, SongFeature
+from app.models import User, SwipeHistory, PlaylistHistory
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from starlette.status import HTTP_401_UNAUTHORIZED
 from datetime import timedelta
