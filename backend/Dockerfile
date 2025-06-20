@@ -6,6 +6,8 @@ WORKDIR /
 
 # 必要なシステムパッケージのインストール
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    dos2unix \
     curl \
     gcc \
     g++ \

@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, FastAPI, Request, HTTPException, File, UploadFile
 from sqlalchemy.orm import Session
 from app.dependencies import get_db, get_current_user
+from typing import List
 from . import schemas
 from . import services
 from app.models import User, SwipeHistory, PlaylistHistory, PhotoUpload
@@ -31,23 +32,41 @@ with open("data/mood_instrument_similarity.json", encoding="utf-8") as f:
 
 # 画像からムードを推定する関数
 def estimate_mood_from_image(image_bytes: bytes) -> str:
+    """画像のバイナリデータからムードを推定する関数。
+    OpenAIのAPIを使って画像の雰囲気を一つだけ選ぶ。
+    Args:
+        image_bytes (bytes): 画像のバイナリデータ。
+    Returns:
+        str: 推定されたムード（雰囲気）。
+    Raises:
+        HTTPException: OpenAI APIの呼び出しに失敗した場合は500エラー。
+    """
+    # 画像データが空の場合は400エラーを返す
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="画像データが空です")
+    # 画像データをBase64エンコードしてData URL形式に変換
     encoded = base64.b64encode(image_bytes).decode("utf-8")
+    # Data URL形式の画像データを作成
     image_data_url = f"data:image/jpeg;base64,{encoded}"
 
-    response = openai_client.chat.completions.create(
-        model="gpt-4o", 
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "この画像の雰囲気を一つだけ選んで。選択肢：" + ", ".join(MOOD_SIMILARITY.keys())},
-                    {"type": "image_url", "image_url": {"url": image_data_url}}
-                ]
-            }
-        ],
-        max_tokens=20,
-    )
-    return response.choices[0].message.content.strip().lower()
+    # OpenAI APIを使ってムードを推定
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "この画像の雰囲気を一つだけ選んで。選択肢：" + ", ".join(MOOD_SIMILARITY.keys())},
+                        {"type": "image_url", "image_url": {"url": image_data_url}}
+                    ]
+                }
+            ],
+            max_tokens=20,
+        )
+        return response.choices[0].message.content.strip().lower()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI APIの呼び出しに失敗しました: {str(e)}")
 
 # ルート
 @router.get("/")
@@ -134,64 +153,122 @@ def login_for_access_token(db: Session = Depends(get_db), form_data: OAuth2Passw
 # 初期楽曲を返す
 @router.post("/photo", response_model=schemas.SwipeInitResponse)
 def swipe_init(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """アップロードされた画像からムードを推定し、初期の楽曲リストを返すエンドポイント。
+    アップロードされた画像を読み込み、OpenAIのAPIを使ってムードを推定し、
+    そのムードに基づいて楽曲を選定する。
+    Args:
+        file (UploadFile): アップロードされた画像ファイル。
+        db (Session): データベースセッション。
+        current_user (User): 現在の認証ユーザー。
+    Returns:
+        schemas.SwipeInitResponse: 初期の楽曲リストを含むレスポンス。
+    Raises:
+        HTTPException: 画像のムード推定に失敗した場合や不正なムードが返された場合は400エラー。
+    """
+    # 画像を読み込む
     image_bytes = file.file.read()
-    main_mood = estimate_mood_from_image(image_bytes)
+    # ムードを推定
+    try:
+        main_mood = estimate_mood_from_image(image_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="画像のムード推定に失敗しました")
+    # ムードが不正な場合は400エラー
     if main_mood not in MOOD_SIMILARITY:
         raise HTTPException(status_code=400, detail=f"'{main_mood}' は不正な雰囲気です")
-
+    # ムードに関連する楽曲を3つ選ぶ
     moods = MOOD_SIMILARITY.get(main_mood, [])[:3]
+    if not moods:
+        raise HTTPException(status_code=400, detail="ムードに関連する楽曲が見つかりません")
+    # 選ばれたムードに基づいて楽曲をランダムに選ぶ
     selected = []
+    # ムードごとに楽曲を選ぶ
     for mood in moods:
+        # 選ばれたムードに関連する楽曲をランダムに選ぶ
+        # 選ばれた楽曲のIDを除外して候補を作成
         candidates = [s for s in SONGS if mood in s["tags"] and s["id"] not in selected]
         if candidates:
             chosen = random.choice(candidates)
             selected.append(chosen["id"])
-
+    
     songs = [s for s in SONGS if s["id"] in selected]
     return {"songs": songs}
 
 # スワイプ結果を記録・次の曲を返す
 @router.post("/swipe", response_model=schemas.SwipeResponse)
 def swipe(swipe: schemas.SwipeRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """スワイプ結果を記録し、次の曲を返すエンドポイント。
+    ユーザーが曲をスワイプした結果（liked=True/False）をデータベースに保存し、
+    ユーザーの好みに基づいて次の曲を選定する。
+    Args:
+        swipe (schemas.SwipeRequest): スワイプ結果（song_id, liked）。
+        db (Session): データベースセッション。
+        current_user (User): 現在の認証ユーザー。
+    Returns:
+        schemas.SwipeResponse: 次の曲の情報を含むレスポンス。
+    Raises:
+        HTTPException: スワイプ候補がない場合は404エラー。
+    """
+    # スワイプ履歴を保存
     db.add(SwipeHistory(user_id=current_user.id, song_id=swipe.song_id, liked=swipe.liked))
     db.commit()
-
+    # スワイプした曲が存在しない場合は404エラー
+    song = db.query(SwipeHistory).filter_by(user_id=current_user.id, song_id=swipe.song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="スワイプした曲が見つかりません")
+    # すでにスワイプした曲のIDを取得
     swiped_ids = [s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id).all()]
+    # ユーザーがLikeした曲のIDを取得
     liked_ids = [s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id, liked=True).all()]
+    # すでにLikeした曲を取得
     liked_songs = [s for s in SONGS if s["id"] in liked_ids]
 
+    # ユーザーがLikeした曲が3曲未満の場合は、雰囲気探索フェーズ
     if len(liked_songs) < 3:
         # 雰囲気探索フェーズ
         liked_moods = {tag for song in liked_songs for tag in song["tags"]}
+        # すでにスワイプした曲のムードを除外
         exclude_moods = {tag for song in SONGS if song["id"] in swiped_ids for tag in song["tags"]}
+        # ムードの候補を取得（スワイプした曲のムードを除外）
         next_moods = sorted(set(MOOD_SIMILARITY.keys()) - exclude_moods, key=lambda x: -len(MOOD_SIMILARITY.get(x, [])))
         for mood in next_moods:
             candidates = [s for s in SONGS if mood in s["tags"] and s["id"] not in swiped_ids]
             if candidates:
                 return {"song": random.choice(candidates)}
 
+    # ユーザーがLikeした曲が5曲以上の場合は、楽器探索フェーズ
     elif len(liked_songs) < 5:
         # 楽器探索フェーズ
         liked_moods = [tag for song in liked_songs for tag in song["tags"]]
         counter = {}
+        # ユーザーがLikeした曲のムードに関連する楽器を集計
         for mood in liked_moods:
             for inst, score in MOOD_INST_SIMILARITY.get(mood, {}).items():
                 counter[inst] = counter.get(inst, 0) + score
+        # 除外された楽器を除いて、スコアの高い楽器を選ぶ
         sorted_instruments = sorted(counter.items(), key=lambda x: -x[1])
+        # 上位2つの楽器を選ぶ
         top_instruments = [inst for inst, _ in sorted_instruments[:2]]
+        # スワイプした曲の楽器を除外
         for song in SONGS:
             if song["id"] in swiped_ids:
                 continue
             if any(inst in song["tags"] for inst in top_instruments):
                 return {"song": song}
-
     raise HTTPException(status_code=404, detail="スワイプ候補なし")
 
+# プレイリスト生成
 @router.get("/playlist", response_model=schemas.PlaylistResponse)
-def generate_playlist(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
+def generate_playlist(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """ユーザーのLike履歴からプレイリストを生成するエンドポイント。
+    ユーザーがLikeした曲を元に、好みの雰囲気と楽器を分析し、10曲の推薦リストを生成する。
+    Args:
+        db (Session): データベースセッション。
+        current_user (User): 現在の認証ユーザー。
+    Returns:
+        schemas.PlaylistResponse: ユーザーのLikeした曲と推薦曲のリストを含むレスポンス。
+    Raises:
+        HTTPException: ユーザーのLike履歴が十分でない場合は400エラー。
+    """
     liked_ids = [s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id, liked=True).all()]
     liked_songs = [s for s in SONGS if s["id"] in liked_ids]
     if len(liked_songs) < 5:
@@ -226,3 +303,16 @@ def generate_playlist(
         db.commit()
 
     return {"liked": liked_songs, "recommended": recommended}
+
+@router.get("/playlist/history", response_model=List[schemas.PlaylistHistoryRead])
+def get_playlist_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """現在のユーザーのプレイリスト履歴を取得する
+    ユーザーが過去に生成したプレイリストの履歴を取得し、最新のものから順に返す。
+    Args:
+        db (Session): データベースセッション。
+        current_user (User): 現在の認証ユーザー。
+    Returns:
+        List[schemas.PlaylistHistoryRead]: ユーザーのプレイリスト履歴のリスト。
+    """
+    history = db.query(PlaylistHistory).filter(PlaylistHistory.user_id == current_user.id).order_by(PlaylistHistory.created_at.desc()).all()
+    return history
