@@ -30,24 +30,24 @@ with open("data/mood_instrument_similarity.json", encoding="utf-8") as f:
     MOOD_INST_SIMILARITY = json.load(f)
 
 # 画像からムードを推定する関数
-# def estimate_mood_from_image(image_bytes: bytes) -> str:
-#     encoded = base64.b64encode(image_bytes).decode("utf-8")
-#     image_data_url = f"data:image/jpeg;base64,{encoded}"
+def estimate_mood_from_image(image_bytes: bytes) -> str:
+    encoded = base64.b64encode(image_bytes).decode("utf-8")
+    image_data_url = f"data:image/jpeg;base64,{encoded}"
 
-#     response = openai_client.chat.completions.create(
-#         model="gpt-4o", 
-#         messages=[
-#             {
-#                 "role": "user",
-#                 "content": [
-#                     {"type": "text", "text": "この画像の雰囲気を一つだけ選んで。選択肢：" + ", ".join(MOOD_SIMILARITY.keys())},
-#                     {"type": "image_url", "image_url": {"url": image_data_url}}
-#                 ]
-#             }
-#         ],
-#         max_tokens=20,
-#     )
-#     return response.choices[0].message.content.strip().lower()
+    response = openai_client.chat.completions.create(
+        model="gpt-4o", 
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "この画像の雰囲気を一つだけ選んで。選択肢：" + ", ".join(MOOD_SIMILARITY.keys())},
+                    {"type": "image_url", "image_url": {"url": image_data_url}}
+                ]
+            }
+        ],
+        max_tokens=20,
+    )
+    return response.choices[0].message.content.strip().lower()
 
 # ルート
 @router.get("/")
@@ -131,84 +131,3 @@ def login_for_access_token(db: Session = Depends(get_db), form_data: OAuth2Passw
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-# 初期プレイリスト生成（画像アップロード）
-@router.post("/photo", response_model=schemas.SongList)
-def generate_init_playlist(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """画像をアップロードして初期プレイリストを生成するエンドポイント
-    
-    Args:
-        request (Request): リクエストオブジェクト。
-        file (UploadFile): アップロードされた画像ファイル。
-        db (Session): データベースセッション（依存性注入によって取得）。
-        current_user (User): 現在の認証ユーザー（依存性注入によって取得）。
-    Returns:
-        schemas.SongList: 類似楽曲と非類似楽曲のリストを含むレスポンスモデル。
-
-    Raises:
-        HTTPException: 画像の処理やデータベース操作に失敗した場合は500エラー。
-    """
-    # 画像ファイルの読み込み
-    try:
-        image_bytes = file.read()
-        image_features = services.call_openai_image_feature_extraction(image_bytes)
-        query_vec = services.feature_to_vector(image_features).reshape(1, -1)
-
-        # DBから楽曲と特徴量取得
-        all_features = db.query(SongFeature).all()
-        all_songs = [db.query(Song).get(f.song_id) for f in all_features]
-
-        song_vectors = np.array([services.feature_to_vector(f) for f in all_features])
-        sims = cosine_similarity(query_vec, song_vectors)[0]
-
-        sorted_idx = np.argsort(sims)
-        top_idxs = sorted_idx[-3:][::-1]
-        bottom_idxs = sorted_idx[:3]
-
-        similar_songs = [all_songs[i] for i in top_idxs]
-        dissimilar_songs = [all_songs[i] for i in bottom_idxs]
-
-        return schemas.SongList(
-            similar=[schemas.SongRead.model_validate(s) for s in similar_songs],
-            dissimilar=[schemas.SongRead.model_validate(s) for s in dissimilar_songs]
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ホーム（スワイプ画面）
-@router.get("/swipe" , response_model=schemas.SongRead)
-def swipe(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """スワイプ用の推薦楽曲を1件返す。
-
-    ユーザーが過去にスワイプした曲を除外し、ランダムに1曲を推薦する。（本来は推薦アルゴリズムを使用）
-    スワイプ可能な曲がない場合は404エラーを返す。
-    
-    Args:
-        request (Request): リクエストオブジェクト。
-        db (Session): データベースセッション（依存性注入によって取得）。
-        current_user (User): 現在の認証ユーザー（依存性注入によって取得）。
-    Returns:
-        schemas.SwipeResponse: 推薦楽曲の情報を含むレスポンスモデル。
-    Raises:
-        HTTPException: スワイプ可能な曲がない場合は404エラー。
-    """
-    # 過去にスワイプした曲のIDを取得
-    swiped_song_ids = db.query(SwipeHistory.song_id).filter(SwipeHistory.user_id == current_user.id).all()
-    swiped_song_ids = [row[0] for row in swiped_song_ids]
-
-    # スワイプしていない曲を取得
-    candidate_songs = db.query(Song).filter(~Song.id.in_(swiped_song_ids)).all()
-
-    if not candidate_songs:
-        raise HTTPException(status_code=404, detail="スワイプ可能な曲がありません")
-
-    # ランダムに1曲推薦（本来は推薦アルゴリズムを使用）
-    song = random.choice(candidate_songs)
-
-    return schemas.SongRead(
-        id=song.id,
-        title=song.title,
-        artist=song.artist,
-        preview_url=song.preview_url,
-        genre=song.genre
-    )

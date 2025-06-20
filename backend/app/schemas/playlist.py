@@ -1,21 +1,19 @@
-# Pydantic Schemas
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import List
 from datetime import datetime
-from .song import SongRead
+from app.schemas.song import Song
 
-class PlaylistBase(BaseModel):
-    name: str
-    display_order: Optional[int]
+# 最終プレイリストの出力
+class PlaylistResponse(BaseModel):
+    liked: List[Song]
+    recommended: List[Song]
+
+# 履歴用：保存されたプレイリストの表示
+class PlaylistHistoryRead(BaseModel):
+    id: int
+    image_path: str
+    songs_json: str
     created_at: datetime
 
-class PlaylistCreate(PlaylistBase):
-    song_id: int
-    user_id: int
-
-class PlaylistSchema(PlaylistBase):
-    song: SongRead
-
-    model_config = {
-        "from_attributes": True
-    }
+    class Config:
+        orm_mode = True

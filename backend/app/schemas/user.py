@@ -1,4 +1,3 @@
-# Pydantic Schemas
 from pydantic import BaseModel
 from pydantic import EmailStr
 

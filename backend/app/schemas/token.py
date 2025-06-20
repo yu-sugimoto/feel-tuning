@@ -1,4 +1,3 @@
-# Pydantic Schemas
 from pydantic import BaseModel, EmailStr
 
 class Token(BaseModel):

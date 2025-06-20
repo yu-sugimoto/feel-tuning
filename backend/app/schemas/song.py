@@ -1,19 +1,9 @@
-# Pydantic Schemas
 from pydantic import BaseModel
-from typing import Optional
+from typing import List
 
-class SongBase(BaseModel):
+# 楽曲データの構造
+class Song(BaseModel):
+    id: int
     title: str
     artist: str
-    preview_url: str
-    genre: Optional[str]
-
-class SongCreate(SongBase):
-    pass
-
-class SongRead(SongBase):
-    id: int
-
-    model_config = {
-        "from_attributes": True
-    }
+    tags: List[str]
