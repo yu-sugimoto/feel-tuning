@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.dependencies import get_db, get_current_user
 from . import schemas
 from . import services
-from app.models import User, SwipeHistory, PlaylistHistory
+from app.models import User, SwipeHistory, PlaylistHistory, PhotoUpload
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from starlette.status import HTTP_401_UNAUTHORIZED
 from datetime import timedelta
@@ -186,3 +186,43 @@ def swipe(swipe: schemas.SwipeRequest, db: Session = Depends(get_db), current_us
                 return {"song": song}
 
     raise HTTPException(status_code=404, detail="スワイプ候補なし")
+
+@router.get("/playlist", response_model=schemas.PlaylistResponse)
+def generate_playlist(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    liked_ids = [s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id, liked=True).all()]
+    liked_songs = [s for s in SONGS if s["id"] in liked_ids]
+    if len(liked_songs) < 5:
+        raise HTTPException(status_code=400, detail="まだ十分なLikeがありません")
+
+    # 好みの雰囲気3つ、楽器2つを取得
+    mood_counter = {}
+    inst_counter = {}
+    for s in liked_songs:
+        for tag in s["tags"]:
+            if tag in MOOD_SIMILARITY:
+                mood_counter[tag] = mood_counter.get(tag, 0) + 1
+            else:
+                inst_counter[tag] = inst_counter.get(tag, 0) + 1
+    top_moods = sorted(mood_counter.items(), key=lambda x: -x[1])[:3]
+    top_insts = sorted(inst_counter.items(), key=lambda x: -x[1])[:2]
+    mood_tags = [m[0] for m in top_moods]
+    inst_tags = [i[0] for i in top_insts]
+
+    # 推薦10曲を選定
+    candidates = [s for s in SONGS if sum(1 for m in mood_tags if m in s["tags"]) >= 2 and any(i in s["tags"] for i in inst_tags) and s["id"] not in liked_ids]
+    recommended = random.sample(candidates, k=min(10, len(candidates)))
+
+    # プレイリストを保存（image_pathは仮に前回アップロードされた画像パスを使う）
+    latest_upload = db.query(PhotoUpload).filter_by(user_id=current_user.id).order_by(PhotoUpload.created_at.desc()).first()
+    if latest_upload:
+        db.add(PlaylistHistory(
+            user_id=current_user.id,
+            image_path=latest_upload.image_path,
+            songs_json=json.dumps(liked_songs + recommended, ensure_ascii=False)
+        ))
+        db.commit()
+
+    return {"liked": liked_songs, "recommended": recommended}
