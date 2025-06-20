@@ -7,29 +7,16 @@ from app.dependencies import get_db
 db_generator = get_db()  # ジェネレータを作成
 db = next(db_generator)  # セッションを取得
 
+# 初期データ投入（ユーザーのみ）
 try:
-    if db.query(User).first() or db.query(Song).first() or db.query(SongFeature).first() or db.query(SwipeHistory).first() or db.query(Playlist).first():
-        print("既にデータが存在するため、初期データ投入をスキップします。")
+    if db.query(User).first():
+        print("既にユーザーデータが存在するため、初期データ投入をスキップします。")
     else:
         with open("data/demo_data.json", "r", encoding="utf-8") as f:
             data = json.load(f)
 
         for item in data.get("users", []):
             db.add(User(**item))
-
-        for item in data.get("songs", []):
-            db.add(Song(**item))
-
-        for item in data.get("song_features", []):
-            db.add(SongFeature(**item))
-
-        for item in data.get("swipe_history", []):
-            item["created_at"] = datetime.fromisoformat(item["created_at"])
-            db.add(SwipeHistory(**item))
-
-        for item in data.get("playlists", []):
-            item["created_at"] = datetime.fromisoformat(item["created_at"])
-            db.add(Playlist(**item))
 
         db.commit()
         print("初期データの投入が完了しました。")

@@ -8,12 +8,46 @@ from app.models import User, Song, SwipeHistory, SongFeature
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from starlette.status import HTTP_401_UNAUTHORIZED
 from datetime import timedelta
-import random
+import random, json
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import base64
+from app.core.config import settings
+from openai import OpenAI
+
+# OpenAIクライアント
+openai_client = OpenAI(api_key=settings.API_KEY)
 
 # APIRouterインスタンスを作成（ルーティングを管理する）
 router = APIRouter()
+
+# データ読み込み（起動時一度だけ）
+with open("data/filtered_songs_4_or_more_tags.json", encoding="utf-8") as f:
+    SONGS = json.load(f)
+with open("data/mood_similarity.json", encoding="utf-8") as f:
+    MOOD_SIMILARITY = json.load(f)
+with open("data/mood_instrument_similarity.json", encoding="utf-8") as f:
+    MOOD_INST_SIMILARITY = json.load(f)
+
+# 画像からムードを推定する関数
+# def estimate_mood_from_image(image_bytes: bytes) -> str:
+#     encoded = base64.b64encode(image_bytes).decode("utf-8")
+#     image_data_url = f"data:image/jpeg;base64,{encoded}"
+
+#     response = openai_client.chat.completions.create(
+#         model="gpt-4o", 
+#         messages=[
+#             {
+#                 "role": "user",
+#                 "content": [
+#                     {"type": "text", "text": "この画像の雰囲気を一つだけ選んで。選択肢：" + ", ".join(MOOD_SIMILARITY.keys())},
+#                     {"type": "image_url", "image_url": {"url": image_data_url}}
+#                 ]
+#             }
+#         ],
+#         max_tokens=20,
+#     )
+#     return response.choices[0].message.content.strip().lower()
 
 # ルート
 @router.get("/")
