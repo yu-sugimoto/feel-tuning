@@ -5,7 +5,12 @@ FROM python:3.13-slim
 WORKDIR /
 
 # 必要なシステムパッケージのインストール
-RUN rm -rf /var/lib/apt/lists/* && apt-get update && apt-get install -y --no-install-recommends curl && apt-get clean
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gcc \
+    g++ \
+    build-essential \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # requirements.txt のコピーとインストール
 COPY requirements.txt .

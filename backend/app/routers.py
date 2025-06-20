@@ -131,3 +131,58 @@ def login_for_access_token(db: Session = Depends(get_db), form_data: OAuth2Passw
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+# 初期楽曲を返す
+@router.post("/photo", response_model=schemas.SwipeInitResponse)
+def swipe_init(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    image_bytes = file.file.read()
+    main_mood = estimate_mood_from_image(image_bytes)
+    if main_mood not in MOOD_SIMILARITY:
+        raise HTTPException(status_code=400, detail=f"'{main_mood}' は不正な雰囲気です")
+
+    moods = MOOD_SIMILARITY.get(main_mood, [])[:3]
+    selected = []
+    for mood in moods:
+        candidates = [s for s in SONGS if mood in s["tags"] and s["id"] not in selected]
+        if candidates:
+            chosen = random.choice(candidates)
+            selected.append(chosen["id"])
+
+    songs = [s for s in SONGS if s["id"] in selected]
+    return {"songs": songs}
+
+# スワイプ結果を記録・次の曲を返す
+@router.post("/swipe", response_model=schemas.SwipeResponse)
+def swipe(swipe: schemas.SwipeRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db.add(SwipeHistory(user_id=current_user.id, song_id=swipe.song_id, liked=swipe.liked))
+    db.commit()
+
+    swiped_ids = [s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id).all()]
+    liked_ids = [s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id, liked=True).all()]
+    liked_songs = [s for s in SONGS if s["id"] in liked_ids]
+
+    if len(liked_songs) < 3:
+        # 雰囲気探索フェーズ
+        liked_moods = {tag for song in liked_songs for tag in song["tags"]}
+        exclude_moods = {tag for song in SONGS if song["id"] in swiped_ids for tag in song["tags"]}
+        next_moods = sorted(set(MOOD_SIMILARITY.keys()) - exclude_moods, key=lambda x: -len(MOOD_SIMILARITY.get(x, [])))
+        for mood in next_moods:
+            candidates = [s for s in SONGS if mood in s["tags"] and s["id"] not in swiped_ids]
+            if candidates:
+                return {"song": random.choice(candidates)}
+
+    elif len(liked_songs) < 5:
+        # 楽器探索フェーズ
+        liked_moods = [tag for song in liked_songs for tag in song["tags"]]
+        counter = {}
+        for mood in liked_moods:
+            for inst, score in MOOD_INST_SIMILARITY.get(mood, {}).items():
+                counter[inst] = counter.get(inst, 0) + score
+        sorted_instruments = sorted(counter.items(), key=lambda x: -x[1])
+        top_instruments = [inst for inst, _ in sorted_instruments[:2]]
+        for song in SONGS:
+            if song["id"] in swiped_ids:
+                continue
+            if any(inst in song["tags"] for inst in top_instruments):
+                return {"song": song}
+
+    raise HTTPException(status_code=404, detail="スワイプ候補なし")
