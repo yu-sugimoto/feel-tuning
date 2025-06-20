@@ -18,3 +18,4 @@ class User(Base):
     # リレーション（One-to-Many）
     swipes = relationship("SwipeHistory", back_populates="user")
     playlists = relationship("PlaylistHistory", back_populates="user")
+    photo_uploads = relationship("PhotoUpload", back_populates="user")
