@@ -81,7 +81,7 @@ export default function PhotoUploadScreen() {
     } as any);
 
     try {
-      const res = await fetch(`${API_URL}/upload-image`, {
+      const res = await fetch(`${API_URL}/photo`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

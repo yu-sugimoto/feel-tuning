@@ -15,6 +15,13 @@ import numpy as np
 import base64
 from app.core.config import settings
 from openai import OpenAI
+import logging
+from PIL import Image
+import io
+import re
+import difflib
+
+logger = logging.getLogger(__name__)
 
 # OpenAIクライアント
 openai_client = OpenAI(api_key=settings.API_KEY)
@@ -44,10 +51,22 @@ def estimate_mood_from_image(image_bytes: bytes) -> str:
     # 画像データが空の場合は400エラーを返す
     if not image_bytes:
         raise HTTPException(status_code=400, detail="画像データが空です")
-    # 画像データをBase64エンコードしてData URL形式に変換
-    encoded = base64.b64encode(image_bytes).decode("utf-8")
-    # Data URL形式の画像データを作成
-    image_data_url = f"data:image/jpeg;base64,{encoded}"
+    # JPEGに変換
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            rgb_image = img.convert("RGB")  # JPEGはRGB形式が必要
+            output = io.BytesIO()
+            rgb_image.save(output, format="JPEG")
+            image_bytes = output.getvalue()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"画像の読み込みまたは変換に失敗しました: {str(e)}")
+
+    # Base64エンコードして Data URL を作成（prefixはここだけ）
+    try:
+        encoded = base64.b64encode(image_bytes).decode("utf-8")
+        image_data_url = f"data:image/jpeg;base64,{encoded}"
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"画像データのエンコードに失敗しました: {str(e)}")
 
     # OpenAI APIを使ってムードを推定
     try:
@@ -57,15 +76,18 @@ def estimate_mood_from_image(image_bytes: bytes) -> str:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "この画像の雰囲気を一つだけ選んで。選択肢：" + ", ".join(MOOD_SIMILARITY.keys())},
+                        {"type": "text", "text": "次の画像を見て、以下の選択肢の中から、最もふさわしいムードを1つだけ選び、その単語だけを小文字で出力してください。理由や説明は不要です。選択肢：" + ", ".join(MOOD_SIMILARITY.keys()) + "出力形式の例：calm"},
                         {"type": "image_url", "image_url": {"url": image_data_url}}
                     ]
                 }
             ],
             max_tokens=20,
         )
-        return response.choices[0].message.content.strip().lower()
+        mood = response.choices[0].message.content.strip().lower()
+        mood = re.sub(r"[^a-z]", "", mood)
+        return mood
     except Exception as e:
+        logger.error(f"OpenAI APIの呼び出しに失敗しました: {str(e)}")
         raise HTTPException(status_code=500, detail=f"OpenAI APIの呼び出しに失敗しました: {str(e)}")
 
 # ルート
@@ -170,13 +192,18 @@ def swipe_init(file: UploadFile = File(...), db: Session = Depends(get_db), curr
     # ムードを推定
     try:
         main_mood = estimate_mood_from_image(image_bytes)
+        print(f"[DEBUG] GPTから返されたムード: '{main_mood}'")
     except Exception as e:
         raise HTTPException(status_code=400, detail="画像のムード推定に失敗しました")
-    # ムードが不正な場合は400エラー
+    # 辞書に存在しないなら補正候補を探す
     if main_mood not in MOOD_SIMILARITY:
-        raise HTTPException(status_code=400, detail=f"'{main_mood}' は不正な雰囲気です")
+        candidates = difflib.get_close_matches(main_mood, MOOD_SIMILARITY.keys(), n=1, cutoff=0.6)
+        if not candidates:
+            raise HTTPException(status_code=400, detail=f"'{main_mood}' は不正な雰囲気です")
+        main_mood = candidates[0]
     # ムードに関連する楽曲を3つ選ぶ
-    moods = MOOD_SIMILARITY.get(main_mood, [])[:3]
+    mood_data = MOOD_SIMILARITY.get(main_mood,{})
+    moods = sorted(mood_data.items(), key=lambda x: x[1], reverse=True)[:3]
     if not moods:
         raise HTTPException(status_code=400, detail="ムードに関連する楽曲が見つかりません")
     # 選ばれたムードに基づいて楽曲をランダムに選ぶ
@@ -304,7 +331,7 @@ def generate_playlist(db: Session = Depends(get_db), current_user: User = Depend
 
     return {"liked": liked_songs, "recommended": recommended}
 
-@router.get("/playlist/history", response_model=List[schemas.PlaylistHistoryRead])
+@router.get("/history", response_model=List[schemas.PlaylistHistoryRead])
 def get_playlist_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """現在のユーザーのプレイリスト履歴を取得する
     ユーザーが過去に生成したプレイリストの履歴を取得し、最新のものから順に返す。
