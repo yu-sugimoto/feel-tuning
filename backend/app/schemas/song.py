@@ -6,4 +6,8 @@ class Song(BaseModel):
     id: int
     title: str
     artist: str
-    tags: List[str]
+    tags: dict
+    url: str
+
+    class Config:
+        orm_mode = True

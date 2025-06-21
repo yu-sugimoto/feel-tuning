@@ -92,8 +92,15 @@ export default function PhotoUploadScreen() {
 
       if (!res.ok) throw new Error(await res.text());
 
+      const response = await res.json();
+
       Alert.alert('送信成功', '写真がアップロードされました');
-      router.push('/');
+      router.push({
+        pathname: "/swipe",
+        params: {
+          songs: JSON.stringify(response.songs), // ← これが絶対必要
+        },
+      });
     } catch (err: any) {
       Alert.alert('送信失敗', err.message);
     }

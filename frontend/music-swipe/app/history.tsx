@@ -1,11 +1,42 @@
-import { View, Text, StyleSheet, ImageBackground, Dimensions, TouchableOpacity, Image } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ImageBackground, Dimensions, TouchableOpacity, Image, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 
 const screenHeight = Dimensions.get("window").height;
 const screenWidth = Dimensions.get("window").width;
+const API_URL = Constants.expoConfig?.extra?.API_URL;
+
+interface PlaylistHistory {
+  id: number;
+  image_path: string;
+  songs_json: string;
+  created_at: string;
+}
 
 export default function HistoryScreen() {
   const router = useRouter();
+  const [history, setHistory] = useState<PlaylistHistory[]>([]);
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const token = await AsyncStorage.getItem("accessToken");
+        const res = await fetch(`${API_URL}/history`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        setHistory(data);
+      } catch (err) {
+        console.error("履歴取得エラー:", err);
+      }
+    };
+    fetchHistory();
+  }, []);
 
   return (
     <ImageBackground
@@ -14,7 +45,22 @@ export default function HistoryScreen() {
       resizeMode="cover"
     >
       <View style={styles.container}>
-        <Text style={styles.title}>履歴はまだありません</Text>
+        <Text style={styles.title}>履歴</Text>
+
+        {history.length === 0 ? (
+          <Text style={styles.noHistory}>履歴はまだありません</Text>
+        ) : (
+          <ScrollView contentContainerStyle={styles.scroll}>
+            {history.map((item) => (
+              <View key={item.id} style={styles.card}>
+                <Text style={styles.date}>{new Date(item.created_at).toLocaleString()}</Text>
+                <Text numberOfLines={1} style={styles.songCount}>
+                  曲数: {JSON.parse(item.songs_json).length}
+                </Text>
+              </View>
+            ))}
+          </ScrollView>
+        )}
 
         <View style={styles.navbar}>
           <TouchableOpacity style={styles.navItem} onPress={() => router.push('/photo')}>
@@ -44,14 +90,42 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    justifyContent: 'center',
+    paddingTop: 60,
     alignItems: 'center',
+    width: '100%',
     paddingBottom: 80,
   },
   title: {
-    fontSize: 24,
+    fontSize: 26,
     color: '#fff',
     fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  noHistory: {
+    fontSize: 18,
+    color: '#ccc',
+    marginTop: 30,
+  },
+  scroll: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  card: {
+    backgroundColor: '#ffffffcc',
+    borderRadius: 15,
+    padding: 15,
+    marginVertical: 10,
+    width: screenWidth * 0.85,
+  },
+  date: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  songCount: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 5,
   },
   navbar: {
     position: 'absolute',

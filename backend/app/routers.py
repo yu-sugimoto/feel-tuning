@@ -90,6 +90,10 @@ def estimate_mood_from_image(image_bytes: bytes) -> str:
         logger.error(f"OpenAI APIの呼び出しに失敗しました: {str(e)}")
         raise HTTPException(status_code=500, detail=f"OpenAI APIの呼び出しに失敗しました: {str(e)}")
 
+def flatten_tags(tags: dict) -> set:
+    """ジャンル・楽器・ムードなどすべてのタグを1つのsetにまとめる"""
+    return {tag for category in tags.values() for tag in category}
+
 # ルート
 @router.get("/")
 def get_root():
@@ -209,127 +213,183 @@ def swipe_init(file: UploadFile = File(...), db: Session = Depends(get_db), curr
     # 選ばれたムードに基づいて楽曲をランダムに選ぶ
     selected = []
     # ムードごとに楽曲を選ぶ
-    for mood in moods:
-        # 選ばれたムードに関連する楽曲をランダムに選ぶ
-        # 選ばれた楽曲のIDを除外して候補を作成
-        candidates = [s for s in SONGS if mood in s["tags"] and s["id"] not in selected]
+    for mood, _ in moods:
+        candidates = [
+            s for s in SONGS 
+            if mood in sum(s["tags"].values(), []) and s["id"] not in selected
+        ]
         if candidates:
             chosen = random.choice(candidates)
             selected.append(chosen["id"])
     
     songs = [s for s in SONGS if s["id"] in selected]
+    print(f"選ばれた楽曲: {[s['title'] for s in songs]}")
     return {"songs": songs}
 
 # スワイプ結果を記録・次の曲を返す
-@router.post("/swipe", response_model=schemas.SwipeResponse)
-def swipe(swipe: schemas.SwipeRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """スワイプ結果を記録し、次の曲を返すエンドポイント。
-    ユーザーが曲をスワイプした結果（liked=True/False）をデータベースに保存し、
-    ユーザーの好みに基づいて次の曲を選定する。
-    Args:
-        swipe (schemas.SwipeRequest): スワイプ結果（song_id, liked）。
-        db (Session): データベースセッション。
-        current_user (User): 現在の認証ユーザー。
-    Returns:
-        schemas.SwipeResponse: 次の曲の情報を含むレスポンス。
-    Raises:
-        HTTPException: スワイプ候補がない場合は404エラー。
-    """
+@router.post("/swipe", response_model= schemas.SwipeResponse)
+def swipe(
+    swipe: schemas.SwipeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """スワイプ結果を記録し、次の曲を返すエンドポイント。"""
     # スワイプ履歴を保存
     db.add(SwipeHistory(user_id=current_user.id, song_id=swipe.song_id, liked=swipe.liked))
     db.commit()
-    # スワイプした曲が存在しない場合は404エラー
-    song = db.query(SwipeHistory).filter_by(user_id=current_user.id, song_id=swipe.song_id).first()
-    if not song:
-        raise HTTPException(status_code=404, detail="スワイプした曲が見つかりません")
-    # すでにスワイプした曲のIDを取得
-    swiped_ids = [s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id).all()]
+
+    # スワイプ済みの曲ID
+    swiped_ids = [
+        s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id).all()
+    ]
+    # スワイプ済みの曲を除外した楽曲リスト
+    SONGS_EXCLUDED = [s for s in SONGS if s["id"] not in swiped_ids]
     # ユーザーがLikeした曲のIDを取得
-    liked_ids = [s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id, liked=True).all()]
-    # すでにLikeした曲を取得
-    liked_songs = [s for s in SONGS if s["id"] in liked_ids]
+    if swipe.liked:
+        # Likeした曲を履歴に追加
+        db.add(SwipeHistory(user_id=current_user.id, song_id=swipe.song_id, liked=True))
+        db.commit()
+    else:
+        # Likeしなかった曲は履歴に追加しない
 
-    # ユーザーがLikeした曲が3曲未満の場合は、雰囲気探索フェーズ
-    if len(liked_songs) < 3:
-        # 雰囲気探索フェーズ
-        liked_moods = {tag for song in liked_songs for tag in song["tags"]}
-        # すでにスワイプした曲のムードを除外
-        exclude_moods = {tag for song in SONGS if song["id"] in swiped_ids for tag in song["tags"]}
-        # ムードの候補を取得（スワイプした曲のムードを除外）
-        next_moods = sorted(set(MOOD_SIMILARITY.keys()) - exclude_moods, key=lambda x: -len(MOOD_SIMILARITY.get(x, [])))
-        for mood in next_moods:
-            candidates = [s for s in SONGS if mood in s["tags"] and s["id"] not in swiped_ids]
-            if candidates:
-                return {"song": random.choice(candidates)}
+        # ユーザーがLikeした曲のIDを取得
+        liked_ids = [
+            s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id, liked=True).all()
+        ]
+        liked_songs = [s for s in SONGS if s["id"] in liked_ids]
+        # Likeした曲が3曲未満の場合はムード探索
+        if len(liked_songs) < 3:
+            liked_moods = {tag for song in liked_songs for tag in flatten_tags(song["tags"])}
+            exclude_moods = {
+                tag for song in SONGS_EXCLUDED if song["id"] in swiped_ids for tag in flatten_tags(song["tags"])
+            }
+            next_moods = sorted(
+                set(MOOD_SIMILARITY.keys()) - exclude_moods,
+                key=lambda x: -len(MOOD_SIMILARITY.get(x, []))
+            )
+            for mood in next_moods:
+                candidates = [s for s in SONGS_EXCLUDED if mood in flatten_tags(s["tags"])]
+                if candidates:
+                    return {"song": random.choice(candidates)}
+        # Likeした曲が5曲未満の場合は楽器探索
+        elif len(liked_songs) < 5:
+            liked_moods = [tag for song in liked_songs for tag in flatten_tags(song["tags"])]
+            counter = {}
+            for mood in liked_moods:
+                for inst, score in MOOD_INST_SIMILARITY.get(mood, {}).items():
+                    counter[inst] = counter.get(inst, 0) + score
+            sorted_instruments = sorted(counter.items(), key=lambda x: -x[1])
+            top_instruments = [inst for inst, _ in sorted_instruments[:2]]
 
-    # ユーザーがLikeした曲が5曲以上の場合は、楽器探索フェーズ
-    elif len(liked_songs) < 5:
-        # 楽器探索フェーズ
-        liked_moods = [tag for song in liked_songs for tag in song["tags"]]
-        counter = {}
-        # ユーザーがLikeした曲のムードに関連する楽器を集計
-        for mood in liked_moods:
-            for inst, score in MOOD_INST_SIMILARITY.get(mood, {}).items():
-                counter[inst] = counter.get(inst, 0) + score
-        # 除外された楽器を除いて、スコアの高い楽器を選ぶ
-        sorted_instruments = sorted(counter.items(), key=lambda x: -x[1])
-        # 上位2つの楽器を選ぶ
-        top_instruments = [inst for inst, _ in sorted_instruments[:2]]
-        # スワイプした曲の楽器を除外
-        for song in SONGS:
-            if song["id"] in swiped_ids:
-                continue
-            if any(inst in song["tags"] for inst in top_instruments):
-                return {"song": song}
-    raise HTTPException(status_code=404, detail="スワイプ候補なし")
+            for song in SONGS_EXCLUDED:
+                if any(inst in flatten_tags(song["tags"]) for inst in top_instruments):
+                    return {"song": song}
+    # スワイプ済みの曲がすべてLikeされている場合は、次の曲をランダムに選ぶ
+    if not SONGS_EXCLUDED:
+        raise HTTPException(status_code=404, detail="スワイプ候補なし")
+    next_song = random.choice(SONGS_EXCLUDED)
+    return {"song": next_song}
+    # # Likeした曲のIDと詳細を取得
+    # liked_ids = [
+    #     s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id, liked=True).all()
+    # ]
+    # liked_songs = [s for s in SONGS if s["id"] in liked_ids]
+
+    # # 3曲未満：ムード探索
+    # if len(liked_songs) < 3:
+    #     liked_moods = {tag for song in liked_songs for tag in flatten_tags(song["tags"])}
+    #     exclude_moods = {
+    #         tag for song in SONGS if song["id"] in swiped_ids for tag in flatten_tags(song["tags"])
+    #     }
+    #     next_moods = sorted(
+    #         set(MOOD_SIMILARITY.keys()) - exclude_moods,
+    #         key=lambda x: -len(MOOD_SIMILARITY.get(x, []))
+    #     )
+    #     for mood in next_moods:
+    #         candidates = [s for s in SONGS if mood in flatten_tags(s["tags"]) and s["id"] not in swiped_ids]
+    #         if candidates:
+    #             return {"song": random.choice(candidates)}
+
+    # # 5曲未満：楽器探索
+    # elif len(liked_songs) < 5:
+    #     liked_moods = [tag for song in liked_songs for tag in flatten_tags(song["tags"])]
+    #     counter = {}
+    #     for mood in liked_moods:
+    #         for inst, score in MOOD_INST_SIMILARITY.get(mood, {}).items():
+    #             counter[inst] = counter.get(inst, 0) + score
+    #     sorted_instruments = sorted(counter.items(), key=lambda x: -x[1])
+    #     top_instruments = [inst for inst, _ in sorted_instruments[:2]]
+
+    #     for song in SONGS:
+    #         if song["id"] in swiped_ids:
+    #             continue
+    #         if any(inst in flatten_tags(song["tags"]) for inst in top_instruments):
+    #             return {"song": song}
+
+    # # 該当曲なし
+    # raise HTTPException(status_code=404, detail="スワイプ候補なし")
 
 # プレイリスト生成
 @router.get("/playlist", response_model=schemas.PlaylistResponse)
 def generate_playlist(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """ユーザーのLike履歴からプレイリストを生成するエンドポイント。
-    ユーザーがLikeした曲を元に、好みの雰囲気と楽器を分析し、10曲の推薦リストを生成する。
-    Args:
-        db (Session): データベースセッション。
-        current_user (User): 現在の認証ユーザー。
-    Returns:
-        schemas.PlaylistResponse: ユーザーのLikeした曲と推薦曲のリストを含むレスポンス。
-    Raises:
-        HTTPException: ユーザーのLike履歴が十分でない場合は400エラー。
-    """
-    liked_ids = [s.song_id for s in db.query(SwipeHistory).filter_by(user_id=current_user.id, liked=True).all()]
+    liked_ids = [
+        s.song_id for s in db.query(SwipeHistory)
+        .filter_by(user_id=current_user.id, liked=True).all()
+    ]
     liked_songs = [s for s in SONGS if s["id"] in liked_ids]
-    if len(liked_songs) < 5:
-        raise HTTPException(status_code=400, detail="まだ十分なLikeがありません")
 
-    # 好みの雰囲気3つ、楽器2つを取得
+    # --- フォールバック①：Like数が足りない場合 ---
+    if len(liked_songs) < 3:
+        liked_songs = random.sample([s for s in SONGS if s["id"] not in liked_ids], k=3)
+
+    # --- タグカウント ---
     mood_counter = {}
     inst_counter = {}
-    for s in liked_songs:
-        for tag in s["tags"]:
+    for song in liked_songs:
+        tags = flatten_tags(song["tags"])
+        for tag in tags:
             if tag in MOOD_SIMILARITY:
                 mood_counter[tag] = mood_counter.get(tag, 0) + 1
             else:
                 inst_counter[tag] = inst_counter.get(tag, 0) + 1
-    top_moods = sorted(mood_counter.items(), key=lambda x: -x[1])[:3]
-    top_insts = sorted(inst_counter.items(), key=lambda x: -x[1])[:2]
-    mood_tags = [m[0] for m in top_moods]
-    inst_tags = [i[0] for i in top_insts]
 
-    # 推薦10曲を選定
-    candidates = [s for s in SONGS if sum(1 for m in mood_tags if m in s["tags"]) >= 2 and any(i in s["tags"] for i in inst_tags) and s["id"] not in liked_ids]
+    mood_tags = [m[0] for m in sorted(mood_counter.items(), key=lambda x: -x[1])[:3]]
+    inst_tags = [i[0] for i in sorted(inst_counter.items(), key=lambda x: -x[1])[:2]]
+
+    # --- 推薦抽出 ---
+    candidates = [
+        s for s in SONGS
+        if s["id"] not in liked_ids
+        and len(set(mood_tags) & flatten_tags(s["tags"])) >= 2
+        and len(set(inst_tags) & flatten_tags(s["tags"])) >= 1
+    ]
+
+    # --- フォールバック②：推薦がゼロならランダム推薦 ---
+    if not candidates:
+        candidates = [s for s in SONGS if s["id"] not in liked_ids]
+
     recommended = random.sample(candidates, k=min(10, len(candidates)))
 
-    # プレイリストを保存（image_pathは仮に前回アップロードされた画像パスを使う）
-    latest_upload = db.query(PhotoUpload).filter_by(user_id=current_user.id).order_by(PhotoUpload.created_at.desc()).first()
+    # --- プレイリスト履歴保存 ---
+    latest_upload = db.query(PhotoUpload)\
+        .filter_by(user_id=current_user.id)\
+        .order_by(PhotoUpload.created_at.desc()).first()
+
     if latest_upload:
-        db.add(PlaylistHistory(
+        playlist = PlaylistHistory(
             user_id=current_user.id,
             image_path=latest_upload.image_path,
-            songs_json=json.dumps(liked_songs + recommended, ensure_ascii=False)
-        ))
+            songs_json=json.dumps(liked_songs + recommended, ensure_ascii=False),
+        )
+        db.add(playlist)
         db.commit()
 
-    return {"liked": liked_songs, "recommended": recommended}
+    return {
+        "liked": liked_songs,
+        "recommended": recommended
+    }
+
+
 
 @router.get("/history", response_model=List[schemas.PlaylistHistoryRead])
 def get_playlist_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

@@ -1,283 +1,197 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ImageBackground, Dimensions, Alert } from 'react-native';
-import { GestureHandlerRootView, Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { 
-  useSharedValue, 
-  useAnimatedStyle, 
-  runOnJS,
-  interpolate,
-  withSpring,
-  withTiming,
-  Extrapolation
+// SwipeScreen.tsx（安定性強化・音楽再生制御）
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  View, Text, StyleSheet, Dimensions, TouchableOpacity, ImageBackground, Image
+} from 'react-native';
+import { Audio } from 'expo-av';
+import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue, useAnimatedStyle, withSpring, withTiming, interpolate, runOnJS, Extrapolation
 } from 'react-native-reanimated';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import Constants from 'expo-constants';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const screenHeight = Dimensions.get("window").height;
-const screenWidth = Dimensions.get("window").width;
+const screenWidth = Dimensions.get('window').width;
+const screenHeight = Dimensions.get('window').height;
 const API_URL = Constants.expoConfig?.extra?.API_URL;
 
 interface Song {
   id: number;
   title: string;
-  artists: string;
-  tags: string[];
+  artist: string;
+  url: string;
+  tags: {
+    genres: string[];
+    instruments: string[];
+    vartags: string[];
+  };
 }
-
-// Mock data for testing
-const MOCK_SONGS: Song[] = [
-  {
-    id: 1,
-    title: "夏の終わり",
-    artists: "森高千里",
-    tags: ["夏", "ノスタルジック", "ポップス"]
-  },
-  {
-    id: 2,
-    title: "津軽海峡冬景色",
-    artists: "石川さゆり",
-    tags: ["冬", "演歌", "しっとり"]
-  },
-  {
-    id: 3,
-    title: "青春",
-    artists: "毛皮のマリーズ",
-    tags: ["青春", "ロック", "エネルギッシュ"]
-  },
-  {
-    id: 4,
-    title: "桜坂",
-    artists: "福山雅治",
-    tags: ["春", "バラード", "切ない"]
-  },
-  {
-    id: 5,
-    title: "クリスマスソング",
-    artists: "back number",
-    tags: ["冬", "クリスマス", "恋愛"]
-  }
-];
-
-const SWIPE_THRESHOLD = screenWidth * 0.3;
 
 export default function SwipeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const [songQueue, setSongQueue] = useState<Song[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [songs, setSongs] = useState<Song[]>([]);
   const [likeCount, setLikeCount] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [lastPlayedId, setLastPlayedId] = useState<number | null>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
 
-  // Animation values
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const scale = useSharedValue(1);
 
-  // Reset animation values safely
-  const resetAnimation = () => {
+  useEffect(() => {
+    if (params.songs) {
+      try {
+        const parsed = JSON.parse(params.songs as string);
+        if (Array.isArray(parsed)) {
+          setSongs(parsed);
+        }
+      } catch (err) {
+        console.error("songs parse error:", err);
+      }
+    }
+  }, [params.songs]);
+
+  useEffect(() => {
+    if (songs.length > 0 && songs[0].id !== lastPlayedId) {
+      playSound(songs[0].url);
+      setLastPlayedId(songs[0].id);
+    }
+    return () => {
+      stopSound();
+    };
+  }, [songs]);
+
+  const playSound = async (url: string) => {
+    await stopSound();
+    try {
+      const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true });
+      soundRef.current = sound;
+      setIsPlaying(true);
+    } catch (err) {
+      console.error("Sound error:", err);
+    }
+  };
+
+  const stopSound = async () => {
+    if (soundRef.current) {
+      try {
+        await soundRef.current.stopAsync();
+        await soundRef.current.unloadAsync();
+      } catch {}
+      soundRef.current = null;
+    }
+    setIsPlaying(false);
+  };
+
+  const togglePlayback = async () => {
+    if (soundRef.current) {
+      const status = await soundRef.current.getStatusAsync();
+      if (status.isLoaded) {
+        if (status.isPlaying) {
+          await soundRef.current.pauseAsync();
+          setIsPlaying(false);
+        } else {
+          await soundRef.current.playAsync();
+          setIsPlaying(true);
+        }
+      }
+    }
+  };
+
+  const handleSwipe = async (liked: boolean) => {
+    const current = songs[0];
+    if (!current) return;
+
+    try {
+      const token = await AsyncStorage.getItem("accessToken");
+      const res = await fetch(`${API_URL}/swipe`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ song_id: current.id, liked })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Swipe API failed");
+
+      if (liked) {
+        const newLikeCount = likeCount + 1;
+        setLikeCount(newLikeCount);
+        if (newLikeCount >= 5) {
+          await stopSound();
+          return router.push("/playlist");
+        }
+      }
+
+      if (data.song && data.song.id !== current.id) {
+        setSongs([data.song]);
+      }
+    } catch (err) {
+      console.error("Swipe error:", err);
+    } finally {
+      resetCard();
+    }
+  };
+
+  const resetCard = () => {
     translateX.value = 0;
     translateY.value = 0;
     scale.value = 1;
   };
 
-  useEffect(() => {
-    // Photo画面から渡された楽曲リストを取得
-    if (params.songs) {
-      try {
-        const songs = JSON.parse(params.songs as string) as Song[];
-        if (songs.length > 0) {
-          setSongQueue(songs);
-          return;
-        }
-      } catch (error) {
-        console.error('楽曲データの解析に失敗:', error);
-      }
-    }
-    
-    // APIデータがない場合はMockデータを使用
-    setSongQueue(MOCK_SONGS);
-  }, [params.songs]);
-
-  const handleSwipe = async (liked: boolean) => {
-    const currentSong = songQueue[0];
-    if (!currentSong) return;
-
-    // Like数をカウント
-    if (liked) {
-      const newLikeCount = likeCount + 1;
-      setLikeCount(newLikeCount);
-      
-      // 3曲Likeで終了
-      if (newLikeCount >= 3) {
-        Alert.alert('完了', 'Swipeありがとうございました！\n3曲の楽曲を見つけました🎵', [
-          { text: 'OK', onPress: () => router.push('/photo') }
-        ]);
-        return;
-      }
-    }
-
-    setIsLoading(true);
-
-    // Mock mode: Use local data if no API_URL or using mock data
-    const usingMockData = !params.songs || songQueue === MOCK_SONGS;
-    if (!API_URL || usingMockData) {
-      // Simulate API delay
-      setTimeout(() => {
-        const newQueue = songQueue.slice(1);
-        setSongQueue(newQueue);
-        resetAnimation();
-        if (newQueue.length === 0) {
-          Alert.alert('完了', 'すべての楽曲をスワイプしました！', [
-            { text: 'OK', onPress: () => router.push('/photo') }
-          ]);
-        }
-        setIsLoading(false);
-      }, 800);
-      return;
-    }
-
-    // Real API call
-    const token = await AsyncStorage.getItem('accessToken');
-
-    try {
-      const response = await fetch(`${API_URL}/swipe`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          song_id: currentSong.id,
-          liked: liked,
-        }),
-      });
-
-      const data = await response.json();
-      
-      if (response.ok && data.song) {
-        // 現在の曲を削除し、APIから受け取った新しい曲を追加
-        const newQueue = songQueue.slice(1);
-        newQueue.push(data.song);
-        setSongQueue(newQueue);
-        resetAnimation();
-      } else if (response.status === 404) {
-        // スワイプ候補なし - 現在の曲だけ削除
-        const newQueue = songQueue.slice(1);
-        setSongQueue(newQueue);
-        resetAnimation();
-        
-        if (newQueue.length === 0) {
-          Alert.alert('完了', 'すべての楽曲をスワイプしました！', [
-            { text: 'OK', onPress: () => router.push('/photo') }
-          ]);
-        }
-      } else {
-        throw new Error(data.detail || 'スワイプに失敗しました');
-      }
-    } catch (error: any) {
-      Alert.alert('エラー', error.message);
-      // エラー時も現在の曲は削除して続行
-      const newQueue = songQueue.slice(1);
-      setSongQueue(newQueue);
-      resetAnimation();
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const panGesture = Gesture.Pan()
+  const gesture = Gesture.Pan()
     .onStart(() => {
-      scale.value = withSpring(0.95);
+      scale.value = withSpring(0.97);
     })
-    .onUpdate((event) => {
-      translateX.value = event.translationX;
-      translateY.value = event.translationY;
+    .onUpdate((e) => {
+      translateX.value = e.translationX;
+      translateY.value = e.translationY;
     })
-    .onEnd((event) => {
-      const shouldSwipeRight = event.translationX > SWIPE_THRESHOLD;
-      const shouldSwipeLeft = event.translationX < -SWIPE_THRESHOLD;
-
+    .onEnd((e) => {
       scale.value = withSpring(1);
-
-      if (shouldSwipeRight || shouldSwipeLeft) {
-        // Animate card out of screen
-        translateX.value = withTiming(shouldSwipeRight ? screenWidth : -screenWidth, { duration: 300 });
-        translateY.value = withTiming(event.translationY + event.velocityY * 0.1, { duration: 300 });
-        
-        // Trigger swipe action
-        runOnJS(handleSwipe)(shouldSwipeRight);
+      if (e.translationX > screenWidth * 0.25) {
+        translateX.value = withTiming(screenWidth);
+        runOnJS(handleSwipe)(true);
+      } else if (e.translationX < -screenWidth * 0.25) {
+        translateX.value = withTiming(-screenWidth);
+        runOnJS(handleSwipe)(false);
       } else {
-        // Spring back to center
         translateX.value = withSpring(0);
         translateY.value = withSpring(0);
       }
     });
 
   const cardStyle = useAnimatedStyle(() => {
-    const rotation = interpolate(
+    const rotate = interpolate(
       translateX.value,
       [-screenWidth / 2, 0, screenWidth / 2],
       [-15, 0, 15],
       Extrapolation.CLAMP
     );
-
-    const opacity = interpolate(
-      Math.abs(translateX.value),
-      [0, SWIPE_THRESHOLD],
-      [1, 0.8],
-      Extrapolation.CLAMP
-    );
-
     return {
       transform: [
         { translateX: translateX.value },
         { translateY: translateY.value },
-        { rotate: `${rotation}deg` },
         { scale: scale.value },
-      ],
-      opacity,
+        { rotate: `${rotate}deg` },
+      ]
     };
   });
 
-  const likeOverlayStyle = useAnimatedStyle(() => {
-    const opacity = interpolate(
-      translateX.value,
-      [0, SWIPE_THRESHOLD],
-      [0, 1],
-      Extrapolation.CLAMP
-    );
-
-    return {
-      opacity,
-    };
-  });
-
-  const dislikeOverlayStyle = useAnimatedStyle(() => {
-    const opacity = interpolate(
-      translateX.value,
-      [-SWIPE_THRESHOLD, 0],
-      [1, 0],
-      Extrapolation.CLAMP
-    );
-
-    return {
-      opacity,
-    };
-  });
-
-  const currentSong = songQueue[0];
-  const nextSong = songQueue[1];
-
-  if (!currentSong) {
+  const current = songs[0];
+  if (!current) {
     return (
       <ImageBackground
         source={require('../assets/images/background.png')}
         style={styles.background}
         resizeMode="cover"
       >
-        <View style={styles.container}>
-          <Text style={styles.title}>楽曲を読み込み中...</Text>
-        </View>
+        <Text style={styles.title}>曲がありません</Text>
       </ImageBackground>
     );
   }
@@ -289,68 +203,26 @@ export default function SwipeScreen() {
         style={styles.background}
         resizeMode="cover"
       >
-        <View style={styles.container}>
-          <Text style={styles.title}>楽曲スワイプ</Text>
-          <Text style={styles.likeCounter}>❤️ {likeCount}/3</Text>
-          
-          <View style={styles.cardContainer}>
-            {/* Next card (background) */}
-            {nextSong && (
-              <View style={[styles.musicCard, styles.nextCard]}>
-                <Text style={styles.songTitle}>{nextSong.title}</Text>
-                <Text style={styles.artistName}>{nextSong.artists}</Text>
-              </View>
-            )}
-
-            {/* Current card (foreground) */}
-            <GestureDetector gesture={panGesture}>
-              <Animated.View style={[styles.musicCard, cardStyle]}>
-                {/* Like overlay */}
-                <Animated.View style={[styles.overlay, styles.likeOverlay, likeOverlayStyle]}>
-                  <Text style={styles.overlayText}>❤️ LIKE</Text>
-                </Animated.View>
-
-                {/* Dislike overlay */}
-                <Animated.View style={[styles.overlay, styles.dislikeOverlay, dislikeOverlayStyle]}>
-                  <Text style={styles.overlayText}>❌ PASS</Text>
-                </Animated.View>
-
-                <Text style={styles.songTitle}>{currentSong.title}</Text>
-                <Text style={styles.artistName}>{currentSong.artists}</Text>
-                <View style={styles.tagsContainer}>
-                  {currentSong.tags.slice(0, 3).map((tag, index) => (
-                    <View key={index} style={styles.tag}>
-                      <Text style={styles.tagText}>{tag}</Text>
-                    </View>
-                  ))}
-                </View>
-              </Animated.View>
-            </GestureDetector>
-          </View>
-
-          {/* Manual buttons */}
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity 
-              style={[styles.swipeButton, styles.dislikeButton]} 
-              onPress={() => handleSwipe(false)}
-              disabled={isLoading}
-            >
-              <Text style={styles.buttonText}>❌</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[styles.swipeButton, styles.likeButton]} 
-              onPress={() => handleSwipe(true)}
-              disabled={isLoading}
-            >
-              <Text style={styles.buttonText}>❤️</Text>
-            </TouchableOpacity>
-          </View>
-
-          {isLoading && (
-            <Text style={styles.loadingText}>次の楽曲を取得中...</Text>
-          )}
-        </View>
+        <Text style={styles.title}>❤️ {likeCount}/5</Text>
+        <TouchableOpacity onPress={togglePlayback}>
+          <Text style={styles.playStatus}>
+            {isPlaying ? "▶️ 再生中" : "⏸️ 停止中（タップで再開）"}
+          </Text>
+        </TouchableOpacity>
+        <GestureDetector gesture={gesture}>
+          <Animated.View style={[styles.card, cardStyle]}>
+            <Image source={require("../assets/images/cd.png")} style={styles.icon} />
+            <Text style={styles.songTitle}>{current.title}</Text>
+            <Text style={styles.artist}>{current.artist}</Text>
+            <View style={styles.tags}>
+              {Object.entries(current.tags).flatMap(([k, v]) =>
+                v.map((tag, idx) => (
+                  <Text key={`${k}-${idx}`} style={styles.tag}>#{tag}</Text>
+                ))
+              )}
+            </View>
+          </Animated.View>
+        </GestureDetector>
       </ImageBackground>
     </GestureHandlerRootView>
   );
@@ -360,155 +232,55 @@ const styles = StyleSheet.create({
   background: {
     width: screenWidth,
     height: screenHeight,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  container: {
-    flex: 1,
-    alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    alignItems: 'center'
   },
   title: {
-    fontSize: 38,
-    color: "#fff",
-    marginBottom: 20,
-    fontWeight: "bold",
-    textAlign: "center",
+    fontSize: 28,
+    color: '#fff',
+    marginTop: 40
   },
-  likeCounter: {
+  playStatus: {
     fontSize: 18,
-    color: "#fff",
-    marginBottom: 20,
-    fontWeight: "bold",
-    textAlign: "center",
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-    paddingHorizontal: 15,
-    paddingVertical: 5,
-    borderRadius: 15,
+    color: '#eee',
+    marginVertical: 10
   },
-  cardContainer: {
-    width: screenWidth * 0.85,
+  card: {
+    width: screenWidth * 0.8,
     height: screenHeight * 0.6,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 40,
-  },
-  musicCard: {
-    position: 'absolute',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    backgroundColor: 'white',
     borderRadius: 20,
-    padding: 30,
-    width: '100%',
-    height: '80%',
-    alignItems: 'center',
     justifyContent: 'center',
-    borderColor: 'white',
-    borderWidth: 3,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 10,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 10,
-  },
-  nextCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    transform: [{ scale: 0.95 }],
-    zIndex: 0,
-  },
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: 20,
     alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
+    padding: 30
   },
-  likeOverlay: {
-    backgroundColor: 'rgba(76, 175, 80, 0.8)',
-  },
-  dislikeOverlay: {
-    backgroundColor: 'rgba(244, 67, 54, 0.8)',
-  },
-  overlayText: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: 'white',
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 4,
+  icon: {
+    width: 200,
+    height: 200,
+    resizeMode: 'contain',
+    marginBottom: 20,
   },
   songTitle: {
-    fontSize: 28,
-    color: '#333',
+    fontSize: 26,
     fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 15,
+    marginBottom: 10,
+    color: '#333'
   },
-  artistName: {
+  artist: {
     fontSize: 20,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 25,
+    marginBottom: 20,
+    color: '#555'
   },
-  tagsContainer: {
+  tags: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'center',
+    justifyContent: 'center'
   },
   tag: {
-    backgroundColor: '#2C7FD5',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 20,
     margin: 5,
-  },
-  tagText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '60%',
-  },
-  swipeButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: 'white',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 5,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  likeButton: {
-    backgroundColor: '#4CAF50',
-  },
-  dislikeButton: {
-    backgroundColor: '#F44336',
-  },
-  buttonText: {
-    fontSize: 24,
-  },
-  loadingText: {
-    color: 'white',
-    fontSize: 16,
-    marginTop: 20,
-    textAlign: 'center',
-  },
+    padding: 8,
+    backgroundColor: '#2196F3',
+    borderRadius: 15,
+    color: 'white'
+  }
 });
