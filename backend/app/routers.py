@@ -20,6 +20,8 @@ from PIL import Image
 import io
 import re
 import difflib
+from uuid import uuid4
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +195,22 @@ def swipe_init(file: UploadFile = File(...), db: Session = Depends(get_db), curr
     """
     # 画像を読み込む
     image_bytes = file.file.read()
+    upload_dir = "uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+    unique_filename = f"{uuid4().hex}_{file.filename}"
+    image_path = os.path.join(upload_dir, unique_filename)
+
+    try:
+        with open(image_path, "wb") as f:
+            f.write(image_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"画像の保存に失敗しました: {str(e)}")
+
+    # DB保存処理（追加）
+    photo_entry = PhotoUpload(user_id=current_user.id, image_path=image_path)
+    db.add(photo_entry)
+    db.commit()
+
     # ムードを推定
     try:
         main_mood = estimate_mood_from_image(image_bytes)

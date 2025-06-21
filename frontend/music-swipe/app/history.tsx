@@ -1,5 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ImageBackground, Dimensions, TouchableOpacity, Image, ScrollView } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ImageBackground,
+  Dimensions,
+  TouchableOpacity,
+  Image,
+  ScrollView,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
@@ -23,6 +32,7 @@ export default function HistoryScreen() {
     const fetchHistory = async () => {
       try {
         const token = await AsyncStorage.getItem("accessToken");
+        if (!token) return;
         const res = await fetch(`${API_URL}/history`, {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -51,14 +61,25 @@ export default function HistoryScreen() {
           <Text style={styles.noHistory}>履歴はまだありません</Text>
         ) : (
           <ScrollView contentContainerStyle={styles.scroll}>
-            {history.map((item) => (
-              <View key={item.id} style={styles.card}>
-                <Text style={styles.date}>{new Date(item.created_at).toLocaleString()}</Text>
-                <Text numberOfLines={1} style={styles.songCount}>
-                  曲数: {JSON.parse(item.songs_json).length}
-                </Text>
-              </View>
-            ))}
+            {history.map((item) => {
+              let songCount = 0;
+              try {
+                songCount = JSON.parse(item.songs_json).length;
+              } catch (e) {}
+              return (
+                <View key={item.id} style={styles.card}>
+                  <Image
+                    source={{ uri: `${API_URL}/${item.image_path}` }}
+                    style={styles.thumbnail}
+                    resizeMode="cover"
+                  />
+                  <Text style={styles.date}>{new Date(item.created_at).toLocaleString()}</Text>
+                  <Text numberOfLines={1} style={styles.songCount}>
+                    曲数: {songCount}
+                  </Text>
+                </View>
+              );
+            })}
           </ScrollView>
         )}
 
@@ -116,6 +137,13 @@ const styles = StyleSheet.create({
     padding: 15,
     marginVertical: 10,
     width: screenWidth * 0.85,
+    alignItems: 'center',
+  },
+  thumbnail: {
+    width: '100%',
+    height: 120,
+    borderRadius: 10,
+    marginBottom: 10,
   },
   date: {
     fontSize: 14,
